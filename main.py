@@ -1,19 +1,19 @@
-import json
+import json, os, stripe
 from flask import Flask, redirect, request, jsonify
 from sqlalchemy import create_engine, Column, Integer, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-import stripe
-
-DATABASE_URL = "postgresql://postgres:admin@localhost:5432/stripe"
-
-stripe.api_key = 'sk_test_51NYDnjK24O07gDqUgeLekHazMKJm3hXggZea4zV8YyySQXnqBJ9XnI8zD84vTGAkOhAyHzok7Krbs6iqikOhM2rF00tGaGOhVZ'
+from dotenv import load_dotenv
+load_dotenv()
 
 app = Flask(__name__, static_url_path='', static_folder='public')
 
 DOMAIN = 'http://localhost:4242'
+stripe.api_key = os.getenv("API_KEY")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
+print(DATABASE_URL)
 # Database setup
 engine = create_engine(DATABASE_URL)
 Base = declarative_base()
@@ -58,17 +58,27 @@ def webhook():
     except ValueError as e:
         return jsonify(success=False, error=str(e)), 400
 
-    if event.type == 'checkout.session.completed':
-        session_id = event.data.object.id
-        session = stripe.checkout.Session.retrieve(session_id)
-
-        amount = session.amount_total
-        payment_status = session.payment_status == 'paid'
-
+    if event.type == 'payment_intent.succeeded':
+        payment_intent = event.data.object # contains a stripe.PaymentIntent
+        print(payment_intent)
+        amount = payment_intent.amount
+        status = payment_intent.status == 'succeeded'
         # Save the payment information in the database
-        payment = Payment(amount=amount, payment_status=payment_status)
-        session.add(payment)
-        session.commit()
+        try:
+            payment = Payment(amount=amount, payment_status=status)
+            session.add(payment)
+            session.commit()
+        except Exception as e:
+            print(e)
+        print('PaymentIntent was successful!')
+        
+    elif event.type == 'payment_method.attached':
+        payment_method = event.data.object # contains a stripe.PaymentMethod
+        print('PaymentMethod was attached to a Customer!')
+    # ... handle other event types
+    else:
+        print('Unhandled event type {}'.format(event.type))
+    
 
     return jsonify(success=True), 200
 
